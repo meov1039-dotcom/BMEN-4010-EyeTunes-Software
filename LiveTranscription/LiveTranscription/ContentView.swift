@@ -57,6 +57,7 @@ struct ContentView: View {
         .padding()
         .task {
             // ✅ Initialize the recognizer once the view appears
+            // Creates an instance of SpeechRecognizer - asks for permissions - if permissions fail, throws an error
             do {
                 speechRecognizer = try await SpeechRecognizer()
             } catch {
@@ -73,6 +74,7 @@ struct ContentView: View {
 
 // MARK: - Speech Recognizer Actor
 @Observable
+// SwiftUI automatically refreshes the UI when transcript changes
 final class SpeechRecognizer {
 
     enum RecognizerError: Error {
@@ -99,6 +101,8 @@ final class SpeechRecognizer {
     private let recognizer: SFSpeechRecognizer?
 
     // MARK: - Init
+    // Sets up recongzier for US English, checks is speech recongnition is authorized
+    // Asks for microphone permission
     init() async throws {
         recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
         guard recognizer != nil else { throw RecognizerError.nilRecognizer }
@@ -115,6 +119,7 @@ final class SpeechRecognizer {
     
 
     // MARK: - Public Methods
+    // These are called by the UI start/stop button
     @MainActor
     func startTranscribing() async {
         await transcribe()
@@ -131,17 +136,19 @@ final class SpeechRecognizer {
     }
 
     // MARK: - Core Transcription Logic
+    // Checks availability of the recognizer
     private func transcribe() {
         guard let recognizer, recognizer.isAvailable else {
             transcribeError(RecognizerError.recognizerUnavailable)
             return
         }
-
+        // Prepares the audio engine and buffer request
         do {
             let (engine, request) = try Self.prepareEngine()
             audioEngine = engine
             self.request = request
 
+            // Starts the recognition taks that continuously processes incoming audio buffers
             task = recognizer.recognitionTask(with: request) { [weak self] result, error in
                 if let result = result {
                     print("🗣️ Recognized partial: \(result.bestTranscription.formattedString)")
@@ -151,23 +158,28 @@ final class SpeechRecognizer {
                 }
                 self?.handleRecognition(result: result, error: error)
             }
+            // Every partial and final trancription is sent to closure
         } catch {
             reset()
             transcribeError(error)
         }
     }
 
+    
+    // Updates live transcript as new words are recognized
     private func handleRecognition(result: SFSpeechRecognitionResult?, error: Error?) {
         if let result {
             updateTranscript(result.bestTranscription.formattedString)
         }
 
+        // Stops the engine if the result is final or if error occurs
         if result?.isFinal == true || error != nil {
             audioEngine?.stop()
             audioEngine?.inputNode.removeTap(onBus: 0)
         }
     }
 
+    //Ensures proper engine and recognition session shutdown after transcription
     private func reset() {
         task?.cancel()
         audioEngine?.stop()
@@ -197,15 +209,17 @@ final class SpeechRecognizer {
         }
     }
     
+    // Prepare audio engine
+    // Create new AVAudioEngine and recognition request
     private static func prepareEngine() throws -> (AVAudioEngine, SFSpeechAudioBufferRecognitionRequest) {
-        let engine = AVAudioEngine()
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
+        let engine = AVAudioEngine() // Captures live audio from mic
+        let request = SFSpeechAudioBufferRecognitionRequest()  // Recieves audio buffers and sends them to Apple's Speech framework
+        request.shouldReportPartialResults = true  // Returns intermediate transcriptions
 
         let inputNode = engine.inputNode
-        let inputFormat = inputNode.inputFormat(forBus: 0)
+        let inputFormat = inputNode.inputFormat(forBus: 0)  // For microphones, bus 0 is the active input
         
-        // Force recognizer format: 44.1 kHz, mono, float32
+        // Force recognizer format: 44.1 kHz, mono, float32 - ensures compatible audio input
         guard let recognizerFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
             sampleRate: 44100,
@@ -216,15 +230,19 @@ final class SpeechRecognizer {
                           userInfo: [NSLocalizedDescriptionKey: "Failed to create format"])
         }
 
-        // Mixer node to resample and downmix if needed
+        // Mixer node to resample and downmix if needed (convert sample rates and combine into mono)
         let mixer = AVAudioMixerNode()
         engine.attach(mixer)
         engine.connect(inputNode, to: mixer, format: inputFormat)
 
+        // Tap -> callback that recieves chunks of audio, appends these into speech recognition request
+        // instalTap sets up a callback (closure) that fires every time an audio buffer of 1024 frames is ready
+        // Mic produces small audio buffer around every 20 ms that goes through the mixer
         mixer.installTap(onBus: 0, bufferSize: 1024, format: recognizerFormat) { buffer, _ in
             request.append(buffer)
         }
 
+        // Start the engine
         engine.prepare()
         try engine.start()
 
@@ -232,9 +250,8 @@ final class SpeechRecognizer {
         print("🎧 Input device format: \(inputFormat.sampleRate) Hz, \(inputFormat.channelCount) ch → \(recognizerFormat.sampleRate) Hz mono")
         return (engine, request)
     }
-
-
-
+    
+    // Pipeline: Microphone → AVAudioEngine → AVAudioMixerNode → SFSpeechAudioBufferRecognitionRequest → SFSpeechRecognizer
 
 
 
