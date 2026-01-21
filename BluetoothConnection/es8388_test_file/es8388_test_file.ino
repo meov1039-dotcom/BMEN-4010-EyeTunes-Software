@@ -30,7 +30,7 @@ i2s_config_t i2s_config = {
 // 33/32 version
 i2s_pin_config_t pin_config = {
     .bck_io_num = 27, .ws_io_num = 25, .data_out_num = 26, .data_in_num = 35};
-// pin numbers should match gpio pins on esp32
+// need to check with es8388 configuration
 size_t readsize = 0;
 
 // create a2dp source obkect
