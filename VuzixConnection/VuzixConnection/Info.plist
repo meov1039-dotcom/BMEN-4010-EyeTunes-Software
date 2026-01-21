@@ -21,5 +21,9 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 	</array>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>App needs access to speech recognition for live transcription.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>App needs microphone access for audio input.</string>
 </dict>
 </plist>
