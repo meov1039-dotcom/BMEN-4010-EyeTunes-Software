@@ -46,10 +46,6 @@ int16_t* get_audio_data() { // * implies address of one or more samples
 
 void setup() {
   Serial.begin(115200);
-  pinMode(39, INPUT_PULLUP); // defining GPIO pins -- > Must match electronic wiring
-  pinMode(5, INPUT_PULLUP);
-  pinMode(19, OUTPUT);
-  pinMode(22, OUTPUT);
   Serial.println("Read Reg ES8388 : ");
   if (!es8388.init()) Serial.println("Init Fail");
   es8388.inputSelect(IN2);
