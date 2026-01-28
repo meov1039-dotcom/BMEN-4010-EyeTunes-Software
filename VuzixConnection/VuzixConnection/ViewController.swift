@@ -49,11 +49,9 @@ class ViewController: UltraliteBaseViewController {
         }
         
         connectionListener = BondListener { [weak self] connected in
-            print("Ultralite connected:", connected)
+            //print("Ultralite connected:", connected)
             if !connected {
                 self?.stopLiveTranscription()
-            } else {
-                print("Device ready for layout requests")
             }
         }
         
@@ -142,8 +140,6 @@ class ViewController: UltraliteBaseViewController {
                 textBlockIds.append(textId)
             }
         }
-        
-        print("Created \(textBlockIds.count) caption text blocks at bottom of display")
     }
 
     private func startSpeechRecognition() {
@@ -233,6 +229,7 @@ class ViewController: UltraliteBaseViewController {
             return
         }
         
+        //Display latency results
         let avgLatency = latencyMeasurements.reduce(0, +) / Double(latencyMeasurements.count)
         let stdDev = calculateStandardDeviation(values: latencyMeasurements, mean: avgLatency)
         
@@ -240,7 +237,13 @@ class ViewController: UltraliteBaseViewController {
         print("Samples: \(latencyMeasurements.count)")
         print("Average: \(String(format: "%.1f", avgLatency))ms")
         print("StdDev: \(String(format: "%.1f", stdDev))ms")
-        print("===================================================")
+        
+        // Log transcript text to console
+        if !fullCaptionText.isEmpty {
+            print("========== FINAL TRANSCRIPT ==========")
+            print(fullCaptionText)
+            print("=======================================")
+        }
     }
 
     // MARK: - Caption Display
@@ -303,25 +306,6 @@ class ViewController: UltraliteBaseViewController {
         let variance = values.reduce(0) { $0 + pow($1 - mean, 2) } / Double(values.count)
         return sqrt(variance)
     }
-    
-    
-    private func printLatencyStatistics() {
-        guard !latencyMeasurements.isEmpty else {
-            print("No transcription latency data collected")
-            return
-        }
-        
-        let avgLatency = latencyMeasurements.reduce(0, +) / Double(latencyMeasurements.count)
-        let stdDev = calculateStandardDeviation(values: latencyMeasurements, mean: avgLatency)
-        
-        print("========== TRANSCRIPTION LATENCY SUMMARY ==========")
-        print("Samples: \(latencyMeasurements.count)")
-        print("Average: \(String(format: "%.1f", avgLatency))ms")
-        print("StdDev: \(String(format: "%.1f", stdDev))ms")
-        print("===================================================")
-    }
-    
-    
     
     
     // MARK: - Text Wrapping Helper
