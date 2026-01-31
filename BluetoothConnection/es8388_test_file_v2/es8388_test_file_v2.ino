@@ -51,7 +51,7 @@ void setup() {
   es8388.inputSelect(IN2); // These lines should only be needed for the ADC configuration
   es8388.setInputGain(8);
   es8388.mixerSourceSelect(MIXADC, MIXADC);
-  es8388.mixerSourceControl(DACOUT); // this sets it for ADC configuration
+  es8388.mixerSourceControl(DACOUT); // this sets it for DAC configuration
   uint8_t *reg;
   for (uint8_t i = 0; i < 53; i++) {
     reg = es8388.readAllReg();
