@@ -48,9 +48,10 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Read Reg ES8388 : ");
   if (!es8388.init()) Serial.println("Init Fail");
-  es8388.inputSelect(IN2);
+  es8388.inputSelect(IN2); // These lines should only be needed for the ADC configuration
   es8388.setInputGain(8);
   es8388.mixerSourceSelect(MIXADC, MIXADC);
+  es8388.mixerSourceControl(DACOUT); // this sets it for ADC configuration
   uint8_t *reg;
   for (uint8_t i = 0; i < 53; i++) {
     reg = es8388.readAllReg();
