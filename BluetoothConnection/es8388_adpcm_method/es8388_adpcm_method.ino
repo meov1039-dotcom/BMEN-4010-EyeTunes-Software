@@ -5,6 +5,7 @@ struct IMAState {
 
 // Step size table and index table are standard IMA ADPCM
 // encodes audio into IMA ADPCM
+// maps the bit of 0-88 to the PCM bits (0-32k)
 static const int stepTable[89] = {
     7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
     19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
@@ -22,55 +23,70 @@ static const int indexTable[16] = {
     -1, -1, -1, -1, 2, 4, 6, 8
 };
 
+// define IMA ADPCM function
+// variable inputs in order: PCM input samples, number of samples, ADPCM output, predictor and index carried across
+// KEY: PCM as 16-bit integer value becomes 8-bit integer value
 void ima_encode_block(const int16_t* pcm, int numSamples, uint8_t* out, IMAState& state) {
+    // start with previous value and check step size
     int predictor = state.predictor;
     int index = state.index;
     int step = stepTable[index];
 
+    // each ADPCM code word becomes 4 bits (i.e. 2 codes = one byte) as bits 3,2,1,0
     uint8_t outByte = 0;
     bool highNibble = true;
 
+    // iterate through each PCM sample
     for (int i = 0; i < numSamples; i++) {
+        // compute the difference between the PCM and the current predictor state
         int diff = pcm[i] - predictor;
         int sign = (diff < 0) ? 8 : 0;
         if (diff < 0) diff = -diff;
 
-        int delta = 0;
+        int delta = 0; // represents the sign bit
         int tempStep = step;
 
-        if (diff >= tempStep) { delta |= 4; diff -= tempStep; }
-        tempStep >>= 1;
-        if (diff >= tempStep) { delta |= 2; diff -= tempStep; }
-        tempStep >>= 1;
-        if (diff >= tempStep) { delta |= 1; }
+        // Ref: | is bitwise OR is operator where: if eithr input bits are 1, then the output is 1
 
-        delta |= sign;
+        // compare the difference from above to the temporary step to determine the magnitude bits
+        if (diff >= tempStep) { delta |= 4; diff -= tempStep; } // check if the difference is larger than full step --> true: set bit 2 to HIGH
+        tempStep >>= 1; // ref: bitshift right causes bits left of the operand to be shifted x number of positions to the right  
+        if (diff >= tempStep) { delta |= 2; diff -= tempStep; } // check if difference is larger than step/2 --> true: set bit 1 to HIGH
+        tempStep >>= 1;
+        if (diff >= tempStep) { delta |= 1; } // check if difference is larger than step/4 --> true: set bit 0 to HIGH
+
+        delta |= sign; // adds sign bit 
 
         int diffq = step >> 3;
-        if (delta & 4) diffq += step;
+        if (delta & 4) diffq += step; // ref: & operator sets output to 0 unless both input bits are 1
         if (delta & 2) diffq += step >> 1;
         if (delta & 1) diffq += step >> 2;
         if (sign) predictor -= diffq;
         else predictor += diffq;
 
-        if (predictor > 32767) predictor = 32767;
-        else if (predictor < -32768) predictor = -32768;
+        // restrict range
+        if (predictor > 32767) predictor = 32767; // sets maximum bound for predictor value
+        else if (predictor < -32768) predictor = -32768; // sets minimum 
 
-        index += indexTable[delta & 0x0F];
+        index += indexTable[delta & 0x0F]; // hexadecimal values = 00001111 bit pattern
+        // set index range
         if (index < 0) index = 0;
         if (index > 88) index = 88;
         step = stepTable[index];
 
         if (highNibble) {
-            outByte = (delta & 0x0F) << 4;
+            outByte = (delta & 0x0F) << 4; // ensure that the low 4 bits are used then assigned to the upper half of the byte (shift 4 times)
             highNibble = false;
         } else {
-            outByte |= (delta & 0x0F);
-            *out++ = outByte;
+            // write the low nibble ( lower 4 bits) ** remember bits are labeled in descending order
+            outByte |= (delta & 0x0F); 
+            // Ref: *out is the value contained at the address pointed to by out
+            *out++ = outByte; // increment out by 1 and assign to outByte
             highNibble = true;
         }
     }
 
+    // if odd number of samples, flush the last nibble
     if (!highNibble) {
         *out++ = outByte;
     }
