@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app connects to Vuzix smart glasses.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>This app communicates with Vuzix smart glasses.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+	</array>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>App needs access to speech recognition for live transcription.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>App needs microphone access for audio input.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Required to receive audio from the ESP32 microphone.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>Help with local network</string>
+	</array>
+</dict>
+</plist>
