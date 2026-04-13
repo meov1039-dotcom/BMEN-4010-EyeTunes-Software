@@ -10,6 +10,10 @@ import Network
 import AVFoundation
 import Observation
 
+extension Notification.Name {
+    static let speechRecognizerUpdated = Notification.Name("speechRecognizerUpdated")
+}
+
 @Observable
 final class UDPAudioReceiver {
     
@@ -19,7 +23,11 @@ final class UDPAudioReceiver {
     private let port: NWEndpoint.Port = 12345
     
     // Reference to the Speech Engine
-    private weak var speechRecognizer: SpeechRecognizer?
+    static var activeRecognizer: SpeechRecognizer?
+    var speechRecognizer: SpeechRecognizer? {
+        get { return Self.activeRecognizer }
+        set { Self.activeRecognizer = newValue }
+    }
     private let processingQueue = DispatchQueue(label: "udp.processing.queue")
 
     func triggerLocalNetworkPrompt() {
@@ -105,6 +113,7 @@ final class UDPAudioReceiver {
             }
         }
     }
+
     
     // MARK: - Process Packet (Logic from your Old Code)
     private func processPacket(_ data: Data) {

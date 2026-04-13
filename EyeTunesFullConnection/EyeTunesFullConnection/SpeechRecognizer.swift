@@ -1,24 +1,25 @@
-//
-//  ExternalAudioSpeechRecognizer.swift
+//  SpeechRecognizer.swift
+
 //  EyeTunesFullConnection
+
 //
+
 //  Created by Alena Tucker on 1/28/26.
+
 //
-
-
 
 import Foundation
 import Speech
 import AVFoundation
-import Observation // <--- The Modern Way
+import Combine
 
-@Observable
-final class SpeechRecognizer {
+@MainActor
+final class SpeechRecognizer: ObservableObject {
 
     // MARK: - UI Published Variables
-    // No need for @Published anymore; @Observable handles it automatically
-    @MainActor var transcript: String = ""
-    @MainActor var currentLatency: String = ""
+    @Published var transcript: String = ""
+    @Published var latencySummary: String = ""
+    @Published var currentLatency: String = "" // NEW: Show live latency
 
     // MARK: - Speech Engine Variables
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
@@ -31,48 +32,52 @@ final class SpeechRecognizer {
     private var isUserStopping = false
     
     // MARK: - Latency Variables
-    private var latencyReadings: [Double] = []
     private var taskStartTime: Date?
+    private var endToEndLatencies: [Double] = []
+    private var bufferTimestamps: [(esp32Time: UInt64, receiptTime: Date, appendTime: Date)] = []
+    
+    // Used for the internal buffer/frame logic if needed
+    private var totalFramesAppended = 0
+    private var totalBuffersAppended = 0
 
     // MARK: - Init
     init() {
-        // We don't need 'await' or 'throws' in init for this setup
+        print("✅ SpeechRecognizer initialized")
     }
-    
-    // Latency Tracking
-    private var endToEndLatencies: [Double] = []
-    private var bufferTimestamps: [(esp32Time: UInt64, receiptTime: Date)] = []
 
     // MARK: - Start Recognition
-    @MainActor
     func startTranscribing() async {
-        // 1. Reset if needed
+        // 1. If we were previously stopped, this is a fresh start. Reset everything now.
         if isUserStopping || accumulatedText.isEmpty {
-            print("SpeechRecognizer: Starting New Session")
+            print("🟢 Starting New Session")
             resetSessionState()
             isUserStopping = false
         }
         
-        // 2. Setup Request
+        // 2. Cancel existing (just in case)
         recognitionTask?.cancel()
         recognitionTask = nil
+        recognitionRequest = nil
         
-        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        guard let recognitionRequest = recognitionRequest else { return }
+        // 3. Create Request
+        let newRequest = SFSpeechAudioBufferRecognitionRequest()
+        newRequest.shouldReportPartialResults = true
+        newRequest.requiresOnDeviceRecognition = true
         
-        recognitionRequest.shouldReportPartialResults = true
-        recognitionRequest.requiresOnDeviceRecognition = true
-        
-        // 3. Check Engine
+        // 4. Check Engine Availability
         guard let speechRecognizer = speechRecognizer, speechRecognizer.isAvailable else {
-            print("Speech recognizer unavailable")
+            print("❌ Speech recognizer unavailable")
             return
         }
         
+        // 5. Mark Time for Latency Math
         self.taskStartTime = Date()
-
-        // 4. Start Task
-        recognitionTask = speechRecognizer.recognitionTask(with: recognitionRequest) { [weak self] result, taskError in
+        
+        // 6. Assign to property
+        self.recognitionRequest = newRequest
+        
+        // 7. Start Task
+        recognitionTask = speechRecognizer.recognitionTask(with: newRequest) { [weak self] result, taskError in
             guard let self = self else { return }
 
             var isFinal = false
@@ -80,104 +85,147 @@ final class SpeechRecognizer {
             if let result = result {
                 self.liveText = result.bestTranscription.formattedString
                 
-                // --- LATENCY MATH ---
+                DispatchQueue.main.async {
+                    self.transcript = self.accumulatedText + " " + self.liveText
+                }
+
+                // Calculate end-to-end latency
                 if let lastSegment = result.bestTranscription.segments.last {
                     let transcriptionTime = Date()
                     
-                    // Map segment timestamp to our receipt buffer
-                    if let receiptTime = self.getReceiptTime(for: lastSegment) {
-                        let e2e = transcriptionTime.timeIntervalSince(receiptTime)
+                    if let (_, receiptTime) = self.findTimestampForSegment(lastSegment) {
+                        let endToEndLatency = transcriptionTime.timeIntervalSince(receiptTime)
                         
-                        if e2e > 0 && e2e < 10 { // Filter outliers
-                            self.endToEndLatencies.append(e2e)
-                            Task { @MainActor in
-                                self.currentLatency = String(format: "%.0f ms", e2e * 1000)
+                        if endToEndLatency > 0 && endToEndLatency < 10 {
+                            self.endToEndLatencies.append(endToEndLatency)
+                            
+                            DispatchQueue.main.async {
+                                self.currentLatency = String(format: "🌐 Latency: %.0f ms", endToEndLatency * 1000)
+                            }
+                            
+                            if self.endToEndLatencies.count % 10 == 0 {
+                                print(String(format: "📊 End-to-End: %.0f ms | Word: '%@'",
+                                           endToEndLatency * 1000,
+                                           lastSegment.substring))
                             }
                         }
                     }
                 }
                 
-                // Update the transcript for the UI
-                Task { @MainActor in
-                    self.transcript = self.accumulatedText + " " + self.liveText
-                }
-
-                // Latency Math
-                if let lastSegment = result.bestTranscription.segments.last,
-                   let taskStart = self.taskStartTime {
-                    let lag = Date().timeIntervalSince(taskStart) - lastSegment.timestamp
-                    if lag > 0 { self.latencyReadings.append(lag) }
-                }
                 isFinal = result.isFinal
             }
 
-            // Auto-Restart Logic (if not stopping)
             if taskError != nil || isFinal {
                 if !self.isUserStopping {
-                    Task { @MainActor in
+                    DispatchQueue.main.async {
                         if !self.liveText.isEmpty {
                             self.accumulatedText += " " + self.liveText
                             self.liveText = ""
                         }
+                        
+                        self.recognitionTask?.cancel()
                         self.recognitionTask = nil
                         self.recognitionRequest = nil
-                        print("SpeechRecognizer: Auto-restarting...")
-                        await self.startTranscribing()
+                        
+                        print("🔄 Auto-restarting (preserving text)...")
+                        Task {
+                            await self.startTranscribing()
+                        }
                     }
                 }
             }
         }
     }
 
-    // MARK: - The Bridge: Feed Audio Here
-    func appendAudioBuffer(_ buffer: AVAudioPCMBuffer, esp32Timestamp: UInt64, receiptTime: Date) {
-            // Store the time this specific chunk arrived
-            bufferTimestamps.append((esp32Timestamp, receiptTime))
-            
-            // Keep buffer small (approx last 5 seconds of audio) to save memory
-            if bufferTimestamps.count > 100 { bufferTimestamps.removeFirst() }
-            
-            recognitionRequest?.append(buffer)
+    // MARK: - Append Audio with Timestamp
+    func appendAudioBuffer(_ buffer: AVAudioPCMBuffer,
+                          esp32Timestamp: UInt64,
+                          receiptTime: Date) {
+        guard let recognitionRequest = recognitionRequest else { return }
+        
+        let appendTime = Date()
+        
+        bufferTimestamps.append((esp32Timestamp, receiptTime, appendTime))
+        
+        if bufferTimestamps.count > 80 {
+            bufferTimestamps.removeFirst()
         }
-    
-    // Helper to find which packet matches the transcribed word
-        private func getReceiptTime(for segment: SFTranscriptionSegment) -> Date? {
-            // Each packet/buffer is roughly 64ms of audio (1024 samples @ 16kHz)
-            // If your ESP sends different sizes, adjust '0.064'
-            let bufferIndex = Int(segment.timestamp / 0.064)
-            
-            if bufferIndex >= 0 && bufferIndex < bufferTimestamps.count {
-                return bufferTimestamps[bufferIndex].receiptTime
-            }
-            return nil
-        }
+        
+        recognitionRequest.append(buffer)
+        totalFramesAppended += Int(buffer.frameLength)
+        totalBuffersAppended += 1
+    }
 
-    // MARK: - Stop
+    // MARK: - Find Timestamp for Segment
+    private func findTimestampForSegment(_ segment: SFTranscriptionSegment) -> (UInt64, Date)? {
+        let segmentAudioTime = segment.timestamp
+        let bufferIndex = Int(segmentAudioTime / 0.064)
+        
+        if bufferIndex >= 0 && bufferIndex < bufferTimestamps.count {
+            let bufferInfo = bufferTimestamps[bufferIndex]
+            return (bufferInfo.esp32Time, bufferInfo.receiptTime)
+        }
+        
+        return nil
+    }
+
+    // MARK: - Stop & Summarize
     func stopTranscribing() {
         isUserStopping = true
-        
         recognitionRequest?.endAudio()
         recognitionTask?.cancel()
         
         let finalFullTranscript = accumulatedText + " " + liveText
+        
         recognitionTask = nil
         recognitionRequest = nil
 
-        // Print Report
-        print("\n════════ FINAL REPORT ════════")
-        print("Transcript: \(finalFullTranscript)")
-        if !endToEndLatencies.isEmpty {
-            let avg = endToEndLatencies.reduce(0, +) / Double(endToEndLatencies.count)
-            print(String(format: "Average End-to-End Latency: %.0f ms", avg * 1000))
+        guard !finalFullTranscript.isEmpty else {
+            print("🛑 Stopped — No transcript generated yet.")
+            return
         }
-        print("══════════════════════════════")
+
+        var lines: [String] = []
+        lines.append("\n════════════ FINAL REPORT ════════════")
         
-        // DO NOT RESET HERE. Wait for next start.
+        if !endToEndLatencies.isEmpty {
+            let avgEndToEnd = endToEndLatencies.reduce(0, +) / Double(endToEndLatencies.count)
+            let minEndToEnd = endToEndLatencies.min() ?? 0
+            let maxEndToEnd = endToEndLatencies.max() ?? 0
+            
+            lines.append("🌐 END-TO-END LATENCY (ESP32 → Transcription):")
+            lines.append(String(format: "   AVG: %.0f ms", avgEndToEnd * 1000))
+            lines.append(String(format: "   Min: %.0f ms | Max: %.0f ms", minEndToEnd * 1000, maxEndToEnd * 1000))
+            lines.append(String(format: "   Samples: %d", endToEndLatencies.count))
+        } else {
+            lines.append("⚡️ Latency: No valid readings.")
+        }
+
+        lines.append("──────────────────────────────────────")
+        lines.append("📝 FULL TRANSCRIPT:")
+        lines.append(finalFullTranscript)
+        lines.append("══════════════════════════════════════")
+        
+        let summary = lines.joined(separator: "\n")
+        latencySummary = summary
+        print(summary)
     }
     
     private func resetSessionState() {
         accumulatedText = ""
         liveText = ""
-        latencyReadings.removeAll()
+        endToEndLatencies.removeAll()
+        bufferTimestamps.removeAll()
+        totalFramesAppended = 0
+        totalBuffersAppended = 0
+    }
+
+    // MARK: - Auth Helper
+    static func requestSpeechAuthorization() async -> SFSpeechRecognizerAuthorizationStatus {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { status in
+                continuation.resume(returning: status)
+            }
+        }
     }
 }
